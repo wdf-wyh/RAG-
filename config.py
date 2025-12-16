@@ -18,6 +18,8 @@ class Config:
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
     OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma3:4b")
     OLLAMA_API_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
+    # .strip()：移除字符串开头和结尾的空白字符（空格、制表符、换行符等）。
+    # .lower()：将字符串转换为小写字母。  
     _raw_provider = os.getenv("MODEL_PROVIDER", "").strip().lower()
     if _raw_provider:
         MODEL_PROVIDER = _raw_provider

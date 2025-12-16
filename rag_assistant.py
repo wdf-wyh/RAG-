@@ -68,11 +68,28 @@ class RAGAssistant:
         if self.vector_store.vectorstore is None:
             raise ValueError("向量数据库未初始化，请先创建或加载数据库")
         
-        # 创建提示词模板
+        # 创建提示词模板（Refine chain 需要两个 prompt：question_prompt 和 refine_prompt）
         template = prompt_template or self.DEFAULT_PROMPT_TEMPLATE
-        prompt = PromptTemplate(
+        question_prompt = PromptTemplate(
             template=template,
             input_variables=["context", "question"]
+        )
+
+        refine_template = """基于以下已有答案与更多的上下文信息，对答案进行改进或补充。
+
+问题: {question}
+
+已有回答: {existing_answer}
+
+额外上下文: {context}
+
+请在不与已有答案冲突的前提下，使用额外上下文信息改进并给出更准确、详细的回答。如果额外上下文中没有有用信息，请保留原回答。
+
+改进后的回答:"""
+
+        refine_prompt = PromptTemplate(
+            template=refine_template,
+            input_variables=["context", "question", "existing_answer"]
         )
         
         # 创建检索器
@@ -81,10 +98,15 @@ class RAGAssistant:
         # 创建问答链
         self.qa_chain = RetrievalQA.from_chain_type(
             llm=self.llm,
-            chain_type="stuff",
+            chain_type="refine",
             retriever=retriever,
             return_source_documents=True,
-            chain_type_kwargs={"prompt": prompt}
+            chain_type_kwargs={
+                "question_prompt": question_prompt,
+                "refine_prompt": refine_prompt,
+                # 指定文档变量名为 `context`，与上面 PromptTemplate 的 input_variables 匹配
+                "document_variable_name": "context",
+            }
         )
         
         print("✓ 问答链初始化成功")

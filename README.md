@@ -256,3 +256,28 @@ MIT License
 ---
 
 ⭐ 如果这个项目对你有帮助，请给个星标！
+
+## 🖥️ 前后端本地运行（新增）
+
+如果你想使用我们新增的浏览器前端（Vue）并通过 REST API 访问知识库：
+
+- 启动后端 API（需先构建知识库或确认 `vector_db` 目录存在）：
+
+```bash
+# 建议使用虚拟环境
+pip install -r requirements.txt
+uvicorn app_api:app --reload --host 0.0.0.0 --port 8000
+# 使用虚拟环境的 uvicorn
+python -m uvicorn app_api:app --reload --host 0.0.0.0 --port 8000
+```
+
+- 启动前端（在 `frontend` 目录下）：
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+前端默认通过 `http://localhost:8000/api` 与后端交互，若后端端口或地址不同，请在 `frontend/.env` 中修改 `VITE_API_BASE`。
+

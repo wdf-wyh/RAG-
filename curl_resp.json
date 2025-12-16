@@ -1,0 +1,1 @@
+{"detail":"Connection error.\n可能是模型提供者无法连接。请检查网络、模型提供者配置（MODEL_PROVIDER、OPENAI_API_BASE、OLLAMA_API_URL）\n当前 OpenAI API Base: https://api.generativeai.googleapis.com/v1\n当前 Ollama API URL: http://localhost:11434\n如果使用本地 Ollama，请确认 Ollama 服务已启动并监听对应端口（默认 http://localhost:11434）。"}

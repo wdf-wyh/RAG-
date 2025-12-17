@@ -108,10 +108,10 @@
               <div :class="['message-content', { 'error-content': msg.isError }]">
                 <!-- 支持逐字显示效果 -->
                 <p v-if="msg.role === 'assistant' && idx === messages.length - 1 && !msg.finished">
-                  {{ msg.content }}
+                  {{ formatContent(msg.content) }}
                   <span class="cursor">|</span>
                 </p>
-                <p v-else>{{ msg.content }}</p>
+                <p v-else>{{ formatContent(msg.content) }}</p>
 
                 <!-- 图片显示 -->
                 <div v-if="msg.image" class="message-image">
@@ -547,7 +547,34 @@ export default {
                 const data = JSON.parse(line.slice(6))
                 
                 if (data.type === 'content') {
-                  this.messages[msgIdx].content += data.data
+                  // data.data 可能是字符串，也可能是对象（例如 {answer: '...'}）
+                  let piece = data.data
+                  if (piece && typeof piece === 'object') {
+                    if (typeof piece.answer === 'string') {
+                      piece = piece.answer
+                    } else {
+                      // 尝试取第一个字符串字段作为候选
+                      const keys = Object.keys(piece)
+                      let found = false
+                      for (const k of keys) {
+                        if (typeof piece[k] === 'string') {
+                          piece = piece[k]
+                          found = true
+                          break
+                        }
+                      }
+                      if (!found) {
+                        try {
+                          piece = JSON.stringify(piece)
+                        } catch (e) {
+                          piece = String(piece)
+                        }
+                      }
+                    }
+                  }
+
+                  // 确保追加的是字符串
+                  this.messages[msgIdx].content += (typeof piece === 'string' ? piece : String(piece))
                 } else if (data.type === 'sources') {
                   // 只在第一次接收时设置源信息，并去重
                   if (this.messages[msgIdx].sources.length === 0) {
@@ -593,6 +620,39 @@ export default {
       } finally {
         this.messageLoading = false
       }
+    }
+    ,
+    formatContent(raw) {
+      if (!raw || typeof raw !== 'string') return raw
+
+      // 尝试解析像 {"answer":"..."} 或其他简单 JSON 包裹的字符串
+      const trimmed = raw.trim()
+      if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+        try {
+          const parsed = JSON.parse(trimmed)
+          // 如果是对象并且含有 answer 字段，取 answer
+          if (parsed && typeof parsed === 'object') {
+            if (typeof parsed.answer === 'string' && parsed.answer.trim().length > 0) {
+              return parsed.answer
+            }
+            // 如果有 fields 里的 text-like 字段，优先返回其第一个可用字符串
+            for (const key of Object.keys(parsed)) {
+              const v = parsed[key]
+              if (typeof v === 'string' && v.trim().length > 0) return v
+            }
+          }
+        } catch (e) {
+          // 不是合法 JSON，继续下面的纯文本处理
+        }
+      }
+
+      // 有些返回值像 '"文本"'（带多余引号），去掉外层引号
+      if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+        return trimmed.slice(1, -1)
+      }
+
+      // 否则返回原始文本
+      return raw
     }
   }
 }

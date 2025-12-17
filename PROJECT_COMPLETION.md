@@ -183,6 +183,7 @@ bash start.sh
 
 ### 分开启动
 ```bash
+source ./.venv/bin/activate
 # 终端 1 - 后端
 python app_api.py
 

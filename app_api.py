@@ -259,12 +259,40 @@ async def query_stream(req: QueryRequest):
                         stream=False
                     )
                     
-                    # 逐字符发送内容
-                    if ollama_result:
-                        for char in ollama_result:
+                    # 解析 Ollama 返回（有时 Ollama 会返回一个 JSON 字符串）
+                    final_text = ""
+                    try:
+                        # 先尝试直接解析为 JSON
+                        parsed = json.loads(ollama_result)
+                        if isinstance(parsed, dict) and "answer" in parsed:
+                            final_text = str(parsed.get("answer", ""))
+                        else:
+                            # 如果 JSON 但没有 answer 字段，使用整个响应的字符串化内容
+                            final_text = str(parsed)
+                    except Exception:
+                        # 解析失败，尝试从文本中抽取第一个 JSON 对象
+                        try:
+                            s = str(ollama_result)
+                            start_idx = s.find('{')
+                            end_idx = s.rfind('}')
+                            if start_idx != -1 and end_idx != -1 and start_idx < end_idx:
+                                maybe_json = s[start_idx:end_idx+1]
+                                parsed2 = json.loads(maybe_json)
+                                if isinstance(parsed2, dict) and "answer" in parsed2:
+                                    final_text = str(parsed2.get("answer", ""))
+                                else:
+                                    final_text = s
+                            else:
+                                final_text = s
+                        except Exception:
+                            final_text = str(ollama_result)
+
+                    # 逐字符发送最终文本
+                    if final_text:
+                        for char in final_text:
                             yield f"data: {json.dumps({'type': 'content', 'data': char})}\n\n"
                             await asyncio.sleep(0.01)
-                    
+
                     yield f"data: {json.dumps({'type': 'done'})}\n\n"
                     
                 except OllamaError as oe:

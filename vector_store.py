@@ -167,6 +167,34 @@ class VectorStore:
         k = k or Config.TOP_K
         results = self.vectorstore.similarity_search_with_score(query, k=k)
         return results
+
+    def similarity_search_with_score_threshold(self, query: str, k: int = None, max_distance: float = None) -> List[tuple]:
+        """带阈值的相似度搜索（基于 Chroma 返回的距离，值越小越相似）
+
+        Args:
+            query: 查询文本
+            k: 返回结果数量
+            max_distance: 最大允许距离（包含），距离越大相关性越低
+
+        Returns:
+            (文档, 距离) 元组列表，已按距离升序并过滤超过阈值的项
+        """
+        if self.vectorstore is None:
+            self.load_vectorstore()
+
+        if self.vectorstore is None:
+            raise ValueError("向量数据库未初始化")
+
+        k = k or Config.TOP_K
+        results = self.vectorstore.similarity_search_with_score(query, k=k)
+
+        if max_distance is None:
+            return results
+
+        # Chroma 返回的 score 是距离，越小表示越相似；过滤并保持升序
+        filtered = [(doc, score) for doc, score in results if score <= max_distance]
+        # 如果过滤后数量少于 k，仍返回过滤后的所有结果
+        return filtered
     
     def delete_collection(self):
         """删除向量数据库集合"""

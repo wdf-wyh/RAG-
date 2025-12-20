@@ -35,13 +35,21 @@ class Config:
     
     # 向量数据库配置
     VECTOR_DB_PATH = os.getenv("VECTOR_DB_PATH", "./vector_db")
-    CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "500"))
-    CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "50"))
+    CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "600"))
+    CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "100"))
     
     # 检索配置
     TOP_K = int(os.getenv("TOP_K", "3"))
     TEMPERATURE = float(os.getenv("TEMPERATURE", "0.7"))
     MAX_TOKENS = int(os.getenv("MAX_TOKENS", "1000"))
+    # 最大距离阈值（Chroma 返回的是距离，值越小表示越相似）
+    # 如果为 None 或空字符串则不启用阈值过滤
+    # 默认不启用距离阈值（避免在未明确配置时误过滤结果）
+    _raw_max_distance = os.getenv("MAX_DISTANCE", "").strip()
+    try:
+        MAX_DISTANCE = float(_raw_max_distance) if _raw_max_distance != "" else None
+    except Exception:
+        MAX_DISTANCE = None
     
     # 文档目录
     DOCUMENTS_PATH = "./documents"

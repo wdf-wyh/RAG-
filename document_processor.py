@@ -8,7 +8,6 @@ from langchain_community.document_loaders import (
     PyPDFLoader,
     TextLoader,
     Docx2txtLoader,
-    UnstructuredMarkdownLoader,
 )
 from typing import Any
 
@@ -28,11 +27,12 @@ class DocumentProcessor:
         self.chunk_size = chunk_size or Config.CHUNK_SIZE
         self.chunk_overlap = chunk_overlap or Config.CHUNK_OVERLAP
         
+        # 优化分割策略：优先按 Markdown 章节、段落分割，保持语义完整性
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap,
             length_function=len,
-            separators=["\n\n", "\n", "。", "！", "？", "；", " ", ""],
+            separators=["\n## ", "\n### ", "\n#### ", "\n\n", "\n", "。", "！", "？", "；", " "],
         )
     
     def load_document(self, file_path: str) -> List[Any]:
@@ -54,7 +54,8 @@ class DocumentProcessor:
             elif file_extension in [".doc", ".docx"]:
                 loader = Docx2txtLoader(file_path)
             elif file_extension == ".md":
-                loader = UnstructuredMarkdownLoader(file_path)
+                # 使用 TextLoader 加载 Markdown 文件，避免 UnstructuredMarkdownLoader 的兼容性问题
+                loader = TextLoader(file_path, encoding="utf-8")
             else:
                 raise ValueError(f"不支持的文件格式: {file_extension}")
             
@@ -103,6 +104,45 @@ class DocumentProcessor:
             分割后的文档块列表
         """
         chunks = self.text_splitter.split_documents(documents)
+
+        # 为每个 chunk 注入 source metadata（如果原始文档有 source 或者来自文件加载，则保留）
+        for idx, c in enumerate(chunks):
+            try:
+                # LangChain 的 Document 有 metadata 属性
+                src = None
+                if hasattr(c, 'metadata') and isinstance(c.metadata, dict):
+                    src = c.metadata.get('source')
+                # 如果没有 source，尝试从 c.uri 或 c._metadata 中寻找（兼容不同 loader）
+                if not src:
+                    if hasattr(c, 'uri'):
+                        src = getattr(c, 'uri')
+                    elif hasattr(c, '_metadata') and isinstance(c._metadata, dict):
+                        src = c._metadata.get('source')
+                if not src:
+                    src = 'unknown'
+                # 保证 metadata 存在并注入 source、chunk_id、chunk_index
+                meta = None
+                if hasattr(c, 'metadata') and isinstance(c.metadata, dict):
+                    meta = c.metadata
+                else:
+                    try:
+                        c.metadata = {}
+                        meta = c.metadata
+                    except Exception:
+                        meta = None
+
+                if meta is not None:
+                    meta['source'] = src
+                    # chunk_id: 文件名 + 块序号，便于定位
+                    try:
+                        fname = str(src).split('/')[-1]
+                    except Exception:
+                        fname = str(src)
+                    meta['chunk_id'] = f"{fname}::chunk_{idx}"
+                    meta['chunk_index'] = idx
+            except Exception:
+                continue
+
         print(f"文档分块完成: {len(documents)} 个文档 -> {len(chunks)} 个文本块")
         return chunks
     

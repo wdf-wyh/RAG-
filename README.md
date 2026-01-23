@@ -9,7 +9,7 @@
 - **🤖 Agentic 架构**: 引入 ReAct 推理循环，支持自主规划、工具调用与反思。
 - **🔍 混合检索**: 向量检索 (ChromaDB) + BM25 稀疏检索 + Cross-encoder 精排。
 - **🌐 联网搜索**: 集成 SearXNG 隐私搜索引擎，支持实时信息获取。
-- **🧠 多模型生态**: 无缝切换 OpenAI, Google Gemini, Ollama (本地私有模型)。
+- **🧠 多模型生态**: 无缝切换 OpenAI, Google Gemini, Ollama (本地私有模型),DeepSeek。
 - **💻 全栈体验**: 
   - **Backend**: FastAPI 高性能异步接口
   - **Frontend**: Vue.js 3 + Vite 现代化界面

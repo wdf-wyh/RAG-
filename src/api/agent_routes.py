@@ -56,7 +56,8 @@ class AgentQueryRequest(BaseModel):
     max_iterations: int = Field(10, description="最大推理迭代次数")
     enable_reflection: bool = Field(True, description="是否启用反思机制")
     enable_planning: bool = Field(True, description="是否启用规划能力")
-    chat_history: Optional[str] = Field(None, description="历史对话")
+    conversation_id: Optional[str] = Field(None, description="会话ID（用于多轮对话）")
+    chat_history: Optional[str] = Field(None, description="历史对话（已废弃，请使用conversation_id）")
 
 
 class AgentQueryResponse(BaseModel):
@@ -73,6 +74,20 @@ class SmartQueryRequest(BaseModel):
     """智能查询请求"""
     question: str
     agent_type: str = "full"
+    conversation_id: Optional[str] = Field(None, description="会话ID（用于多轮对话）")
+
+
+class ConversationCreateResponse(BaseModel):
+    """创建对话响应"""
+    conversation_id: str
+    message: str = "对话已创建"
+
+
+class ConversationHistoryResponse(BaseModel):
+    """对话历史响应"""
+    conversation_id: str
+    messages: List[Dict[str, Any]]
+    total: int
 
 
 class ToolInfo(BaseModel):
@@ -131,6 +146,8 @@ async def agent_query(req: AgentQueryRequest):
     start_time = time.time()
     logger.info(f"[Agent Query] 开始处理请求 - 问题: {req.question[:100]}...")
     logger.info(f"[Agent Query] 配置 - 类型: {req.agent_type}, Provider: {req.provider}, 最大迭代: {req.max_iterations}")
+    if req.conversation_id:
+        logger.info(f"[Agent Query] 使用会话ID: {req.conversation_id}")
     
     # 如果指定了 provider，临时设置到 Config 中
     original_provider = Config.MODEL_PROVIDER
@@ -150,13 +167,36 @@ async def agent_query(req: AgentQueryRequest):
         agent = RAGAgent(config=config)
         logger.info(f"[Agent Query] Agent已创建，注册工具数: {len(agent.tools)}")
         
+        # 如果提供了 conversation_id，设置当前会话
+        if req.conversation_id:
+            agent.set_conversation(req.conversation_id)
+            logger.info(f"[Agent Query] 已设置会话ID: {req.conversation_id}")
+            # 获取历史上下文
+            history = agent._conversation_manager.format_history_for_llm(
+                req.conversation_id, 
+                max_turns=3
+            )
+        else:
+            # 如果没有 conversation_id，使用传统的 chat_history（向后兼容）
+            history = req.chat_history or ""
+        
         # 执行查询
         logger.info(f"[Agent Query] 开始执行推理循环...")
         result = await asyncio.to_thread(
             agent.run,
             req.question,
-            req.chat_history or ""
+            history
         )
+        
+        # 如果使用了 conversation_id，保存对话到历史
+        if req.conversation_id and result.success:
+            agent._conversation_manager.add_message(
+                req.conversation_id, "user", req.question
+            )
+            agent._conversation_manager.add_message(
+                req.conversation_id, "assistant", result.answer, save_to_disk=True
+            )
+            logger.info(f"[Agent Query] 已保存对话到历史")
         
         elapsed = time.time() - start_time
         logger.info(f"[Agent Query] 查询完成 - 耗时: {elapsed:.2f}秒, 迭代次数: {result.iterations}, 使用工具: {result.tools_used}")
@@ -196,7 +236,24 @@ async def smart_query(req: SmartQueryRequest):
     """智能查询 - 自动判断使用 RAG 还是 Agent"""
     try:
         agent = get_or_create_agent(req.agent_type)
-        result = await asyncio.to_thread(agent.smart_query, req.question)
+        
+        # 如果提供了 conversation_id，设置当前会话
+        if req.conversation_id:
+            agent.set_conversation(req.conversation_id)
+            logger.info(f"[Smart Query] 使用会话ID: {req.conversation_id}")
+            # 使用带保存历史的查询
+            result = await asyncio.to_thread(
+                agent.smart_query, 
+                req.question, 
+                save_to_history=True
+            )
+        else:
+            # 不保存历史
+            result = await asyncio.to_thread(
+                agent.smart_query, 
+                req.question,
+                save_to_history=False
+            )
         
         return {
             "success": result.success,
@@ -216,6 +273,8 @@ async def agent_query_stream(req: AgentQueryRequest):
     start_time = time.time()
     logger.info(f"[Agent Stream] 开始处理流式查询 - 问题: {req.question[:100]}...")
     logger.info(f"[Agent Stream] 配置 - 类型: {req.agent_type}, Provider: {req.provider}")
+    if req.conversation_id:
+        logger.info(f"[Agent Stream] 使用会话ID: {req.conversation_id}")
     
     # 如果指定了 provider，临时设置到 Config 中
     original_provider = Config.MODEL_PROVIDER
@@ -234,13 +293,24 @@ async def agent_query_stream(req: AgentQueryRequest):
             
             agent = RAGAgent(config=config)
             
+            # 如果提供了 conversation_id，设置当前会话
+            if req.conversation_id:
+                agent.set_conversation(req.conversation_id)
+                # 获取历史上下文
+                history = agent._conversation_manager.format_history_for_llm(
+                    req.conversation_id, 
+                    max_turns=3
+                )
+            else:
+                history = req.chat_history or ""
+            
             yield f"data: {json.dumps({'type': 'start', 'data': '开始推理...'})}\n\n"
             
             # 执行推理
             result = await asyncio.to_thread(
                 agent.run,
                 req.question,
-                req.chat_history or ""
+                history
             )
             
             # 发送思考过程
@@ -263,6 +333,16 @@ async def agent_query_stream(req: AgentQueryRequest):
             
             # 发送最终答案
             yield f"data: {json.dumps({'type': 'answer', 'data': result.answer}, ensure_ascii=False)}\n\n"
+            
+            # 如果使用了 conversation_id，保存对话到历史
+            if req.conversation_id and result.success:
+                agent._conversation_manager.add_message(
+                    req.conversation_id, "user", req.question
+                )
+                agent._conversation_manager.add_message(
+                    req.conversation_id, "assistant", result.answer, save_to_disk=True
+                )
+                logger.info(f"[Agent Stream] 已保存对话到历史")
             
             # 发送元信息
             yield f"data: {json.dumps({'type': 'meta', 'data': {'tools_used': result.tools_used, 'iterations': result.iterations}}, ensure_ascii=False)}\n\n"
@@ -355,4 +435,105 @@ async def execute_tool(tool_name: str, params: Dict[str, Any]):
         }
         
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ========================
+# 对话管理 API
+# ========================
+
+@router.post("/conversation/create", response_model=ConversationCreateResponse)
+async def create_conversation():
+    """创建新的对话会话"""
+    try:
+        agent = get_or_create_agent()
+        conversation_id = agent.start_conversation()
+        logger.info(f"[Conversation] 创建新会话: {conversation_id}")
+        
+        return ConversationCreateResponse(
+            conversation_id=conversation_id,
+            message="对话已创建"
+        )
+    except Exception as e:
+        logger.error(f"[Conversation] 创建会话失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/conversation/{conversation_id}/history", response_model=ConversationHistoryResponse)
+async def get_conversation_history(conversation_id: str, max_messages: Optional[int] = None):
+    """获取对话历史"""
+    try:
+        agent = get_or_create_agent()
+        agent.set_conversation(conversation_id)
+        
+        history = agent.get_conversation_history(max_messages=max_messages)
+        
+        messages = [
+            {
+                "role": msg.role,
+                "content": msg.content,
+                "timestamp": msg.timestamp
+            }
+            for msg in history
+        ]
+        
+        logger.info(f"[Conversation] 获取会话历史: {conversation_id}, 消息数: {len(messages)}")
+        
+        return ConversationHistoryResponse(
+            conversation_id=conversation_id,
+            messages=messages,
+            total=len(messages)
+        )
+    except Exception as e:
+        logger.error(f"[Conversation] 获取历史失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/conversation/{conversation_id}/clear")
+async def clear_conversation(conversation_id: str):
+    """清空对话历史"""
+    try:
+        agent = get_or_create_agent()
+        agent.set_conversation(conversation_id)
+        agent.clear_conversation()
+        
+        logger.info(f"[Conversation] 清空会话: {conversation_id}")
+        
+        return {"success": True, "message": "对话历史已清空"}
+    except Exception as e:
+        logger.error(f"[Conversation] 清空会话失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/conversation/list")
+async def list_conversations():
+    """列出所有对话"""
+    try:
+        agent = get_or_create_agent()
+        conversations = agent._conversation_manager.list_conversations()
+        
+        logger.info(f"[Conversation] 列出所有会话，共 {len(conversations)} 个")
+        
+        return {
+            "success": True,
+            "conversations": conversations,
+            "total": len(conversations)
+        }
+    except Exception as e:
+        logger.error(f"[Conversation] 列出会话失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/conversation/{conversation_id}")
+async def delete_conversation(conversation_id: str):
+    """删除对话"""
+    try:
+        agent = get_or_create_agent()
+        agent._conversation_manager.delete_conversation(conversation_id)
+        
+        logger.info(f"[Conversation] 删除会话: {conversation_id}")
+        
+        return {"success": True, "message": "对话已删除"}
+    except Exception as e:
+        logger.error(f"[Conversation] 删除会话失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

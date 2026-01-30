@@ -685,6 +685,26 @@ export default {
       this.$message.success('已开始新对话')
     },
     
+    // 创建新会话（调用 API）
+    async createNewConversation() {
+      try {
+        const response = await fetch(`${API_BASE}/agent/conversation/create`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        })
+        
+        if (response.ok) {
+          const data = await response.json()
+          this.conversationId = data.conversation_id
+          console.log('[对话] 创建新会话:', this.conversationId)
+        } else {
+          console.error('[对话] 创建会话失败:', response.status)
+        }
+      } catch (e) {
+        console.error('[对话] 创建会话异常:', e)
+      }
+    },
+    
     async sendQuestion() {
       if (!this.question.trim() && !this.currentImageBase64) return
       
@@ -724,16 +744,26 @@ export default {
       })
       
       try {
+        const payload = {
+          question: q,
+          conversation_id: this.conversationId || null
+        }
+        
         const response = await fetch(`${API_BASE}/agent/smart-query`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ question: q })
+          body: JSON.stringify(payload)
         })
         
         const data = await response.json()
         if (data.success) {
           this.messages[msgIdx].content = data.answer
           this.messages[msgIdx].sources = data.sources || []
+          
+          // 如果还没有会话 ID，创建一个
+          if (!this.conversationId) {
+            await this.createNewConversation()
+          }
         } else {
           this.messages[msgIdx].content = data.error || '查询失败'
           this.messages[msgIdx].isError = true
@@ -768,8 +798,17 @@ export default {
           provider: this.provider || undefined,  // 添加 provider
           max_iterations: 10,// 最多迭代 10 次
           enable_reflection: true,// 启用反思
-          enable_planning: true// 启用规划
+          enable_planning: true,// 启用规划
+          conversation_id: this.conversationId || null  // 添加会话 ID
         }
+        
+        // 如果还没有会话 ID，先创建一个
+        if (!this.conversationId) {
+          await this.createNewConversation()
+          payload.conversation_id = this.conversationId
+        }
+        
+        console.log('[Agent] 发送请求，会话ID:', this.conversationId)
         
         // 使用 Agent 流式响应
         const response = await fetch(`${API_BASE}/agent/query-stream`, {

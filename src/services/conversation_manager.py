@@ -114,14 +114,15 @@ class ConversationManager:
             history = history[-(max_turns * 2):]
         
         if not history:
-            return ""
+            return "（无历史对话）"
         
-        formatted = "【对话历史】\n"
-        for msg in history:
-            role_name = "用户" if msg.role == "user" else "助手"
-            formatted += f"{role_name}: {msg.content}\n"
+        formatted = ""
+        for i, msg in enumerate(history, 1):
+            role_name = "👤 用户" if msg.role == "user" else "🤖 助手"
+            # 添加序号和时间戳，让上下文更清晰
+            formatted += f"{i}. {role_name}: {msg.content}\n"
         
-        return formatted + "\n"
+        return formatted.strip()
     
     def clear_conversation(self, conversation_id: str):
         """清空指定会话的历史

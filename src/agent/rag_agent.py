@@ -210,10 +210,15 @@ class RAGAgent(BaseAgent):
             "帮我",
             "整理",
         ]
+        
+        # 检查是否涉及历史对话
+        history_indicators = ["刚才", "之前", "上一个", "上个", "前面", "历史"]
+        is_history_related = any(ind in question for ind in history_indicators)
 
         is_complex = any(ind in question for ind in complex_indicators)
 
-        if not is_complex:
+        # 如果涉及历史对话，必须使用 Agent 推理（需要理解上下文）
+        if not is_complex and not is_history_related:
             # 尝试直接 RAG 检索
             rag_tool = self.tools.get("rag_search")
             if rag_tool:
@@ -235,8 +240,24 @@ class RAGAgent(BaseAgent):
                     
                     return response
 
-        # 复杂问题使用完整 Agent 推理
-        response = self.run(question)
+        # 复杂问题或涉及历史对话，使用完整 Agent 推理
+        # 如果有会话ID，获取历史上下文
+        chat_history = ""
+        if self._current_conversation_id:
+            chat_history = self._conversation_manager.format_history_for_llm(
+                self._current_conversation_id,
+                max_turns=5  # 增加到5轮，确保有足够的上下文
+            )
+        
+        response = self.run(question, chat_history)
+        
+        # 保存助手回复到历史
+        if save_to_history and self._current_conversation_id and response.success:
+            self._conversation_manager.add_message(
+                self._current_conversation_id, "assistant", response.answer
+            )
+        
+        return response
         
         # 保存助手回复到历史
         if save_to_history and self._current_conversation_id and response.success:

@@ -226,8 +226,9 @@ Step 2: [具体行动]
         Returns:
             (action_name, action_input) 或 (None, None)
         """
-        # 匹配 Final Answer
-        final_match = re.search(r'Final Answer:\s*(.+?)(?=\n\n|$)', response, re.DOTALL)
+        # 匹配 Final Answer - 使用贪婪匹配获取完整答案内容
+        # 从 "Final Answer:" 开始一直匹配到字符串末尾
+        final_match = re.search(r'Final Answer:\s*(.+)', response, re.DOTALL)
         if final_match:
             return ("__final__", final_match.group(1).strip())
         

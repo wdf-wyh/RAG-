@@ -199,6 +199,96 @@ async def build_progress_endpoint():
     return _build_progress
 
 
+@router.get("/conversations")
+async def list_conversations():
+    """列出所有对话历史"""
+    try:
+        conv_manager = get_conversation_manager()
+        conversation_ids = conv_manager.list_conversations()
+        
+        conversations = []
+        for conv_id in conversation_ids:
+            # 加载对话以获取摘要信息
+            conv_manager.load_conversation(conv_id)
+            history = conv_manager.get_history(conv_id, max_messages=2)
+            
+            # 获取第一条用户消息作为标题
+            title = "新对话"
+            last_time = None
+            message_count = len(conv_manager.get_history(conv_id))
+            
+            for msg in history:
+                if msg.role == "user":
+                    title = msg.content[:50] + ("..." if len(msg.content) > 50 else "")
+                    break
+            
+            # 获取最后消息时间
+            full_history = conv_manager.get_history(conv_id)
+            if full_history:
+                last_time = full_history[-1].timestamp
+            
+            conversations.append({
+                "id": conv_id,
+                "title": title,
+                "message_count": message_count,
+                "last_time": last_time
+            })
+        
+        # 按时间倒序排列
+        conversations.sort(key=lambda x: x["last_time"] or "", reverse=True)
+        
+        return {"success": True, "conversations": conversations}
+    except Exception as e:
+        logger.error(f"获取对话列表失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/conversations/{conversation_id}")
+async def get_conversation(conversation_id: str):
+    """获取单个对话的详细内容"""
+    try:
+        conv_manager = get_conversation_manager()
+        
+        # 尝试加载对话
+        if not conv_manager.load_conversation(conversation_id):
+            raise HTTPException(status_code=404, detail="对话不存在")
+        
+        history = conv_manager.get_history(conversation_id)
+        
+        # 转换为可序列化的格式
+        messages = [
+            {
+                "role": msg.role,
+                "content": msg.content,
+                "timestamp": msg.timestamp
+            }
+            for msg in history
+        ]
+        
+        return {
+            "success": True,
+            "conversation_id": conversation_id,
+            "messages": messages
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取对话详情失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/conversations/{conversation_id}")
+async def delete_conversation(conversation_id: str):
+    """删除指定对话"""
+    try:
+        conv_manager = get_conversation_manager()
+        conv_manager.delete_conversation(conversation_id)
+        return {"success": True, "message": "对话已删除"}
+    except Exception as e:
+        logger.error(f"删除对话失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/query-stream")
 async def query_stream(req: QueryRequest):
     """流式查询知识库（SSE）"""

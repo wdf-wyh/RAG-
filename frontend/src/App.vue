@@ -44,6 +44,15 @@
 
           <el-button
             type="default"
+            @click="historyVisible = true"
+            class="mr-2"
+            title="查看对话历史"
+          >
+            📜 历史
+          </el-button>
+
+          <el-button
+            type="default"
             @click="startNewConversation"
             class="mr-2"
             :title="conversationId ? '开始新对话' : '当前是新对话'"
@@ -277,6 +286,47 @@
       </main>
     </div>
 
+    <!-- 对话历史抽屉 -->
+    <el-drawer v-model="historyVisible" title="对话历史" size="35%" @open="loadConversationList">
+      <div class="history-content">
+        <div v-if="historyLoading" class="history-loading">
+          <el-icon class="is-loading"><Loading /></el-icon>
+          <span>加载中...</span>
+        </div>
+        
+        <div v-else-if="conversationList.length === 0" class="history-empty">
+          <div class="empty-icon">💬</div>
+          <p>暂无对话历史</p>
+        </div>
+        
+        <div v-else class="conversation-list">
+          <div 
+            v-for="conv in conversationList" 
+            :key="conv.id"
+            :class="['conversation-item', { active: conv.id === conversationId }]"
+            @click="loadConversation(conv.id)"
+          >
+            <div class="conv-header">
+              <span class="conv-title">{{ conv.title }}</span>
+              <el-button
+                type="text"
+                size="small"
+                @click.stop="deleteConversation(conv.id)"
+                class="delete-btn"
+                title="删除对话"
+              >
+                🗑️
+              </el-button>
+            </div>
+            <div class="conv-meta">
+              <span class="conv-count">{{ conv.message_count }} 条消息</span>
+              <span class="conv-time">{{ formatTime(conv.last_time) }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </el-drawer>
+
     <!-- 设置抽屉 -->
     <el-drawer v-model="settingsVisible" title="模型配置" size="35%">
       <div class="settings-content">
@@ -340,14 +390,15 @@
 
 <script>
 import axios from 'axios'
-import { Setting, PictureFilled } from '@element-plus/icons-vue'
+import { Setting, PictureFilled, Loading } from '@element-plus/icons-vue'
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000/api'
 
 export default {
   components: {
     Setting,
-    PictureFilled
+    PictureFilled,
+    Loading
   },
   data() {
     return {
@@ -355,11 +406,16 @@ export default {
       isDark: false,
       question: '',
       messages: [],
-      conversationId: null,  // 当前会诚ID
+      conversationId: null,  // 当前会话ID
       status: { vector_store_loaded: false },
       settingsVisible: false,
       kbVisible: false,
+      historyVisible: false,  // 对话历史抽屉
       messageLoading: false,
+      
+      // 对话历史
+      conversationList: [],
+      historyLoading: false,
       
       // 查询模式
       queryMode: 'rag',
@@ -683,6 +739,101 @@ export default {
       this.conversationId = null
       this.messages = []
       this.$message.success('已开始新对话')
+    },
+    
+    // 加载对话列表
+    async loadConversationList() {
+      this.historyLoading = true
+      try {
+        const res = await axios.get(`${API_BASE}/conversations`)
+        if (res.data.success) {
+          this.conversationList = res.data.conversations
+        }
+      } catch (e) {
+        console.error('加载对话列表失败:', e)
+        this.$message.error('加载对话列表失败')
+      } finally {
+        this.historyLoading = false
+      }
+    },
+    
+    // 加载指定对话
+    async loadConversation(conversationId) {
+      try {
+        const res = await axios.get(`${API_BASE}/conversations/${conversationId}`)
+        if (res.data.success) {
+          // 设置当前会话ID
+          this.conversationId = conversationId
+          
+          // 将历史消息转换为前端格式
+          this.messages = res.data.messages.map(msg => ({
+            role: msg.role,
+            content: msg.content,
+            finished: true,
+            sources: []
+          }))
+          
+          // 关闭抽屉
+          this.historyVisible = false
+          
+          this.$message.success('已加载历史对话，您可以继续对话')
+        }
+      } catch (e) {
+        console.error('加载对话失败:', e)
+        this.$message.error('加载对话失败')
+      }
+    },
+    
+    // 删除对话
+    async deleteConversation(conversationId) {
+      try {
+        await this.$confirm('确定要删除这个对话吗？', '提示', {
+          confirmButtonText: '确定',
+          cancelButtonText: '取消',
+          type: 'warning'
+        })
+        
+        const res = await axios.delete(`${API_BASE}/conversations/${conversationId}`)
+        if (res.data.success) {
+          // 从列表中移除
+          this.conversationList = this.conversationList.filter(c => c.id !== conversationId)
+          
+          // 如果删除的是当前对话，清空当前状态
+          if (this.conversationId === conversationId) {
+            this.conversationId = null
+            this.messages = []
+          }
+          
+          this.$message.success('对话已删除')
+        }
+      } catch (e) {
+        if (e !== 'cancel') {
+          console.error('删除对话失败:', e)
+          this.$message.error('删除对话失败')
+        }
+      }
+    },
+    
+    // 格式化时间
+    formatTime(timestamp) {
+      if (!timestamp) return ''
+      const date = new Date(timestamp)
+      const now = new Date()
+      const diff = now - date
+      
+      // 今天内
+      if (diff < 24 * 60 * 60 * 1000 && date.getDate() === now.getDate()) {
+        return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+      }
+      
+      // 一周内
+      if (diff < 7 * 24 * 60 * 60 * 1000) {
+        const days = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+        return days[date.getDay()]
+      }
+      
+      // 其他
+      return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
     },
     
     // 创建新会话（调用 API）
@@ -1320,6 +1471,133 @@ export default {
 
 .dark .observation-url { color: #9fd1ff }
 .dark .observation-file { color: #b8d8ff }
+
+/* 对话历史样式 */
+.history-content {
+  padding: 16px;
+}
+
+.history-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px;
+  color: #909399;
+}
+
+.history-empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: #909399;
+}
+
+.history-empty .empty-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.conversation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.conversation-item {
+  padding: 16px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.6), rgba(245,247,250,0.8));
+  border: 1px solid rgba(0,0,0,0.06);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.conversation-item:hover {
+  background: linear-gradient(180deg, rgba(64,158,255,0.08), rgba(64,158,255,0.04));
+  border-color: rgba(64,158,255,0.2);
+  transform: translateY(-1px);
+}
+
+.conversation-item.active {
+  background: linear-gradient(180deg, rgba(64,158,255,0.12), rgba(64,158,255,0.06));
+  border-color: rgba(64,158,255,0.3);
+}
+
+.conv-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+
+.conv-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: #303133;
+  line-height: 1.4;
+  flex: 1;
+  word-break: break-word;
+}
+
+.delete-btn {
+  opacity: 0;
+  transition: opacity 0.2s;
+  padding: 4px 8px !important;
+  min-height: auto !important;
+}
+
+.conversation-item:hover .delete-btn {
+  opacity: 1;
+}
+
+.conv-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: #909399;
+}
+
+.conv-count {
+  background: rgba(64,158,255,0.1);
+  padding: 2px 8px;
+  border-radius: 10px;
+  color: #409eff;
+}
+
+/* 深色模式对话历史 */
+.dark .conversation-item {
+  background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+  border: 1px solid rgba(255,255,255,0.04);
+}
+
+.dark .conversation-item:hover {
+  background: linear-gradient(180deg, rgba(64,158,255,0.12), rgba(64,158,255,0.06));
+  border-color: rgba(64,158,255,0.25);
+}
+
+.dark .conversation-item.active {
+  background: linear-gradient(180deg, rgba(64,158,255,0.18), rgba(64,158,255,0.10));
+  border-color: rgba(64,158,255,0.35);
+}
+
+.dark .conv-title {
+  color: #e8f3ff;
+}
+
+.dark .conv-meta {
+  color: #8a9bb0;
+}
+
+.dark .conv-count {
+  background: rgba(64,158,255,0.15);
+  color: #7db8ff;
+}
+
+.dark .history-loading,
+.dark .history-empty {
+  color: #8a9bb0;
+}
 
 
 </style>

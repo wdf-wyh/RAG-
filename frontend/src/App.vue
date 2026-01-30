@@ -787,7 +787,8 @@ export default {
         sources: [],
         thoughtProcess: [],
         toolsUsed: [],
-        finished: false
+        finished: false,
+        streamingTokens: ''  // 用于累积流式 token
       })
       
       try {
@@ -820,6 +821,9 @@ export default {
         const reader = response.body.getReader()
         const decoder = new TextDecoder()
         let buffer = ''
+        let currentThinkingContent = ''  // 当前思考内容
+        let answerContent = ''  // 累积的最终答案
+        let isStreamingAnswer = false  // 是否正在流式输出答案
         
         while (true) {
           const { done, value } = await reader.read()
@@ -835,9 +839,30 @@ export default {
                 const data = JSON.parse(line.slice(6))
                 
                 if (data.type === 'start') {
-                  this.messages[msgIdx].content = '正在思考...\n'
+                  this.messages[msgIdx].content = '🤔 正在思考...\n'
+                } else if (data.type === 'iteration') {
+                  // 新的迭代开始
+                  if (!isStreamingAnswer) {
+                    this.messages[msgIdx].content = `🔄 迭代 ${data.data.iteration}/${data.data.max}\n`
+                  }
+                } else if (data.type === 'thinking_start') {
+                  // 开始思考，重置当前思考内容
+                  currentThinkingContent = ''
+                  if (!isStreamingAnswer) {
+                    this.messages[msgIdx].content = '💭 正在推理...\n'
+                  }
+                } else if (data.type === 'thinking_end') {
+                  // 思考完成，从 data.data 获取完整的思考内容
+                  currentThinkingContent = data.data || ''
+                  const thoughtMatch = currentThinkingContent.match(/Thought:\s*(.+?)(?=Action:|Final Answer:|$)/s)
+                  if (thoughtMatch) {
+                    this.messages[msgIdx].thoughtProcess.push({
+                      step: data.step,
+                      thought: thoughtMatch[1].trim()
+                    })
+                  }
                 } else if (data.type === 'thought') {
-                  // 添加思考步骤
+                  // 兼容旧格式：添加思考步骤
                   this.messages[msgIdx].thoughtProcess.push({
                     step: data.data.step,
                     thought: data.data.thought
@@ -851,6 +876,9 @@ export default {
                   }
                   if (!this.messages[msgIdx].toolsUsed.includes(data.data.tool)) {
                     this.messages[msgIdx].toolsUsed.push(data.data.tool)
+                  }
+                  if (!isStreamingAnswer) {
+                    this.messages[msgIdx].content = `🔧 使用工具: ${data.data.tool}\n`
                   }
                 } else if (data.type === 'observation') {
                   // 更新观察结果
@@ -866,6 +894,25 @@ export default {
                       this.messages[msgIdx].thoughtProcess[currentStep].observation = data.data
                     }
                   }
+                  if (!isStreamingAnswer) {
+                    this.messages[msgIdx].content = `📋 获取到工具结果...\n`
+                  }
+                } else if (data.type === 'answer_start') {
+                  // 开始流式输出答案
+                  isStreamingAnswer = true
+                  answerContent = ''
+                  this.messages[msgIdx].content = ''
+                } else if (data.type === 'answer_token') {
+                  // 流式答案 token
+                  answerContent += data.data
+                  this.messages[msgIdx].content = answerContent
+                } else if (data.type === 'reflecting') {
+                  if (!isStreamingAnswer) {
+                    this.messages[msgIdx].content = `🔍 ${data.data}\n`
+                  }
+                } else if (data.type === 'reflection_result') {
+                  // 反思结果
+                  this.messages[msgIdx].reflection = data.data
                 } else if (data.type === 'answer') {
                   this.messages[msgIdx].content = data.data
                 } else if (data.type === 'meta') {

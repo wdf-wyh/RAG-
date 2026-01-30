@@ -8,9 +8,10 @@ import json
 import asyncio
 import logging
 import time
+import threading
 
 from src.agent.rag_agent import RAGAgent, AgentBuilder
-from src.agent.base import AgentConfig, AgentResponse
+from src.agent.base import AgentConfig, AgentResponse, StreamEvent
 from src.config.settings import Config
 
 # 配置日志
@@ -269,7 +270,7 @@ async def smart_query(req: SmartQueryRequest):
 
 @router.post("/query-stream")
 async def agent_query_stream(req: AgentQueryRequest):
-    """流式 Agent 查询 - 实时返回推理过程"""
+    """流式 Agent 查询 - 实时返回 LLM 推理过程（token 级别）"""
     start_time = time.time()
     logger.info(f"[Agent Stream] 开始处理流式查询 - 问题: {req.question[:100]}...")
     logger.info(f"[Agent Stream] 配置 - 类型: {req.agent_type}, Provider: {req.provider}")
@@ -283,6 +284,7 @@ async def agent_query_stream(req: AgentQueryRequest):
         logger.info(f"[Agent Stream] 已设置 MODEL_PROVIDER = {req.provider}")
     
     async def generate():
+        final_answer = None
         try:
             config = AgentConfig(
                 max_iterations=req.max_iterations,
@@ -304,54 +306,83 @@ async def agent_query_stream(req: AgentQueryRequest):
             else:
                 history = req.chat_history or ""
             
-            yield f"data: {json.dumps({'type': 'start', 'data': '开始推理...'})}\n\n"
+            # 使用真正的流式推理
+            def run_stream_sync():
+                results = []
+                for event in agent.run_stream(req.question, history):
+                    results.append(event)
+                return results
             
-            # 执行推理
-            result = await asyncio.to_thread(
-                agent.run,
-                req.question,
-                history
-            )
+            # 在线程中运行流式生成器
+            import concurrent.futures
+            import queue
             
-            # 发送思考过程
-            for step in result.thought_process:
-                yield f"data: {json.dumps({'type': 'thought', 'data': {'step': step.step, 'thought': step.thought}}, ensure_ascii=False)}\n\n"
-                await asyncio.sleep(0.1)
+            event_queue = queue.Queue()
+            
+            def stream_worker():
+                try:
+                    for event in agent.run_stream(req.question, history):
+                        event_queue.put(event)
+                    event_queue.put(None)  # 结束标记
+                except Exception as e:
+                    event_queue.put(Exception(str(e)))
+            
+            # 启动后台线程
+            import threading
+            worker_thread = threading.Thread(target=stream_worker, daemon=True)
+            worker_thread.start()
+            
+            # 从队列中读取事件并发送
+            while True:
+                try:
+                    # 使用短超时以便能够响应
+                    event = await asyncio.get_event_loop().run_in_executor(
+                        None, 
+                        lambda: event_queue.get(timeout=0.1)
+                    )
+                except:
+                    # 超时，继续检查
+                    if not worker_thread.is_alive():
+                        break
+                    continue
                 
-                if step.action:
-                    yield f"data: {json.dumps({'type': 'action', 'data': {'tool': step.action, 'input': step.action_input}}, ensure_ascii=False)}\n\n"
-                    await asyncio.sleep(0.1)
+                if event is None:
+                    break
+                    
+                if isinstance(event, Exception):
+                    yield f"data: {json.dumps({'type': 'error', 'data': str(event)}, ensure_ascii=False)}\n\n"
+                    break
                 
-                if step.observation:
-                    # 构建观察结果数据，包含文本和结构化数据
-                    observation_payload = {
-                        'text': step.observation[:500],
-                        'data': step.observation_data if hasattr(step, 'observation_data') and step.observation_data else None
-                    }
-                    yield f"data: {json.dumps({'type': 'observation', 'data': observation_payload}, ensure_ascii=False)}\n\n"
-                    await asyncio.sleep(0.1)
-            
-            # 发送最终答案
-            yield f"data: {json.dumps({'type': 'answer', 'data': result.answer}, ensure_ascii=False)}\n\n"
+                # 将 StreamEvent 转换为 JSON
+                event_data = {
+                    'type': event.type,
+                    'data': event.data,
+                    'step': event.step
+                }
+                
+                # 记录最终答案
+                if event.type == 'answer':
+                    final_answer = event.data
+                
+                yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
+                
+                # 对于 token 事件，不需要额外延迟
+                if event.type != 'token':
+                    await asyncio.sleep(0.01)
             
             # 如果使用了 conversation_id，保存对话到历史
-            if req.conversation_id and result.success:
+            if req.conversation_id and final_answer:
                 agent._conversation_manager.add_message(
                     req.conversation_id, "user", req.question
                 )
                 agent._conversation_manager.add_message(
-                    req.conversation_id, "assistant", result.answer, save_to_disk=True
+                    req.conversation_id, "assistant", final_answer, save_to_disk=True
                 )
                 logger.info(f"[Agent Stream] 已保存对话到历史")
             
-            # 发送元信息
-            yield f"data: {json.dumps({'type': 'meta', 'data': {'tools_used': result.tools_used, 'iterations': result.iterations}}, ensure_ascii=False)}\n\n"
-            
             # 记录完成日志
             total_elapsed = time.time() - start_time
-            logger.info(f"[Agent Stream] 查询完成 - 总耗时: {total_elapsed:.2f}秒, Agent类型: {req.agent_type}, 迭代数: {result.iterations}")
-            
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            logger.info(f"[Agent Stream] 查询完成 - 总耗时: {total_elapsed:.2f}秒")
             
         except Exception as e:
             logger.error(f"[Agent Stream] 执行失败 - 错误: {str(e)}")

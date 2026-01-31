@@ -4,9 +4,9 @@
     <header class="app-header">
       <div class="header-content">
         <div class="logo-section">
-          <!-- <div class="logo-icon">📚</div> -->
+          <div class="logo-icon floating">✨</div>
           <div class="logo-text">
-            <h1> 知识库</h1>
+            <h1 class="gradient-text">Agent 知识库</h1>
             <p>智能知识检索助手</p>
           </div>
         </div>
@@ -18,34 +18,36 @@
             </span> -->
           </div>
           <!-- 模式选择 -->
-          <el-select
-            v-model="queryMode"
-            class="mode-select mr-3"
-            @change="onModeChange"
-            style="width: 140px"
-          >
-            <el-option
-              v-for="mode in modeOptions"
-              :key="mode.value"
-              :label="mode.label"
-              :value="mode.value"
-            >
-              <span>{{ mode.icon }} {{ mode.label }}</span>
-            </el-option>
-          </el-select>
+          <div class="custom-select mr-3" :class="{ 'is-open': modeDropdownOpen }" v-click-outside="() => modeDropdownOpen = false">
+            <div class="custom-select__trigger" @click="modeDropdownOpen = !modeDropdownOpen">
+              <span class="custom-select__value">{{ currentModeLabel }}</span>
+              <span class="custom-select__arrow">▾</span>
+            </div>
+            <div class="custom-select__dropdown" v-show="modeDropdownOpen">
+              <div
+                v-for="mode in modeOptions"
+                :key="mode.value"
+                class="custom-select__option"
+                :class="{ 'is-selected': queryMode === mode.value }"
+                @click="selectMode(mode.value)"
+              >
+                {{ mode.icon }} {{ mode.label }}
+              </div>
+            </div>
+          </div>
           
           <el-button
             type="primary"
             @click="kbVisible = true"
-            class="mr-2"
+            class="mr-2 hover-lift"
           >
-            知识库
+            📚 知识库
           </el-button>
 
           <el-button
             type="default"
             @click="historyVisible = true"
-            class="mr-2"
+            class="mr-2 hover-lift"
             title="查看对话历史"
           >
             📜 历史
@@ -54,28 +56,29 @@
           <el-button
             type="default"
             @click="startNewConversation"
-            class="mr-2"
+            class="mr-2 hover-lift"
             :title="conversationId ? '开始新对话' : '当前是新对话'"
           >
-            💬 新对话
+            ✨ 新对话
           </el-button>
 
           <el-button
             type="text"
             @click="toggleTheme"
-            class="mr-2"
+            class="mr-2 theme-toggle-btn"
             :title="isDark ? '切换到浅色模式' : '切换到深色模式'"
           >
-            <span v-if="isDark">☀️</span>
-            <span v-else>🌙</span>
+            <span v-if="isDark" class="theme-icon">☀️</span>
+            <span v-else class="theme-icon">🌙</span>
           </el-button>
 
           <el-button
             type="primary"
             :icon="Setting"
             @click="settingsVisible = true"
+            class="hover-lift"
           >
-            模型设置
+            ⚙️ 设置
           </el-button>
         </div>
       </div>
@@ -84,7 +87,7 @@
     <!-- 主容器 -->
     <div class="main-container">
       <!-- 知识库抽屉（包含上传与构建） -->
-      <el-drawer v-model="kbVisible" title="知识库管理" size="35%">
+      <el-drawer v-model="kbVisible" title="📚 知识库管理" size="35%">
         <div class="sidebar-content">
           <div class="sidebar-section">
             <h3 class="section-title">📤 上传文档</h3>
@@ -97,7 +100,7 @@
                 @change="handleFileSelect"
                 accept=".md,.pdf,.docx,.txt"
               />
-              <div class="upload-box" ref="uploadBox" @click="triggerFileInput">
+              <div class="upload-box hover-lift" ref="uploadBox" @click="triggerFileInput">
                 <div class="upload-icon">📎</div>
                 <p>点击选择或拖拽文件</p>
                 <span class="upload-hint">支持 MD、PDF、DOCX、TXT</span>
@@ -140,7 +143,9 @@
             </div>
 
             <!-- 构建结果 -->
-            <div v-if="buildResult" :class="['build-result', buildResult.type]">
+            <div v-if="buildResult" :class="['build-result', buildResult.type, 'appear']">
+              <span v-if="buildResult.type === 'success'">✅</span>
+              <span v-else>❌</span>
               {{ buildResult.message }}
             </div>
           </div>
@@ -151,9 +156,23 @@
       <main class="chat-area">
         <div class="messages-container">
           <div v-if="messages.length === 0" class="empty-state">
-            <!-- <div class="empty-icon">🤖</div> -->
-            <h2>开始提问吧</h2>
+            <div class="empty-icon floating">🚀</div>
+            <h2>开始探索知识</h2>
             <p>{{ currentModeDesc }}</p>
+            <div class="empty-hints">
+              <div class="hint-card glass-card hover-lift">
+                <span class="hint-icon">💡</span>
+                <span class="hint-text">上传文档构建知识库</span>
+              </div>
+              <div class="hint-card glass-card hover-lift">
+                <span class="hint-icon">🔍</span>
+                <span class="hint-text">智能检索精准答案</span>
+              </div>
+              <div class="hint-card glass-card hover-lift">
+                <span class="hint-icon">🤖</span>
+                <span class="hint-text">AI 助手随时待命</span>
+              </div>
+            </div>
           </div>
 
           <div v-for="(msg, idx) in messages" :key="idx" :class="['message', msg.role, { 'error-message': msg.isError }]">
@@ -332,13 +351,23 @@
       <div class="settings-content">
         <div class="settings-group">
           <label class="settings-label">模型提供者</label>
-          <el-select v-model="provider" placeholder="选择模型提供者" class="full-width">
-            <el-option label="后端默认" value=""></el-option>
-            <el-option label="OpenAI" value="openai"></el-option>
-            <el-option label="Gemini" value="gemini"></el-option>
-            <el-option label="Ollama (本地)" value="ollama"></el-option>
-            <el-option label="DeepSeek (远程)" value="deepseek"></el-option>
-          </el-select>
+          <div class="custom-select full-width" :class="{ 'is-open': providerDropdownOpen }" v-click-outside="() => providerDropdownOpen = false">
+            <div class="custom-select__trigger" @click="providerDropdownOpen = !providerDropdownOpen">
+              <span class="custom-select__value">{{ currentProviderLabel }}</span>
+              <span class="custom-select__arrow">▾</span>
+            </div>
+            <div class="custom-select__dropdown"  v-show="providerDropdownOpen">
+              <div
+                v-for="opt in providerOptions"
+                :key="opt.value"
+                class="custom-select__option"
+                :class="{ 'is-selected': provider === opt.value }"
+                @click="selectProvider(opt.value)"
+              >
+                {{ opt.label }}
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- Ollama 配置 -->
@@ -400,6 +429,21 @@ export default {
     PictureFilled,
     Loading
   },
+  directives: {
+    'click-outside': {
+      mounted(el, binding) {
+        el._clickOutside = (event) => {
+          if (!(el === event.target || el.contains(event.target))) {
+            binding.value(event)
+          }
+        }
+        document.addEventListener('click', el._clickOutside)
+      },
+      unmounted(el) {
+        document.removeEventListener('click', el._clickOutside)
+      }
+    }
+  },
   data() {
     return {
       // 主题：暗色模式开关
@@ -419,12 +463,23 @@ export default {
       
       // 查询模式
       queryMode: 'rag',
+      modeDropdownOpen: false,
       modeOptions: [
         { value: 'rag', label: '纯 RAG', icon: '', desc: '仅知识库检索，速度快' },
         { value: 'smart', label: '智能处理', icon: '', desc: '自动判断用 RAG 还是 Agent' },
         { value: 'full', label: '完整 Agent', icon: '', desc: '全功能推理+工具' },
         { value: 'research', label: '网络模式', icon: '', desc: '强化网络搜索能力' },
         { value: 'manager', label: '文件模式', icon: '', desc: '强化文件操作能力' }
+      ],
+      
+      // 模型提供者选项
+      providerDropdownOpen: false,
+      providerOptions: [
+        { value: '', label: '后端默认' },
+        { value: 'openai', label: 'OpenAI' },
+        { value: 'gemini', label: 'Gemini' },
+        { value: 'ollama', label: 'Ollama (本地)' },
+        { value: 'deepseek', label: 'DeepSeek (远程)' }
       ],
       
       // 模型配置
@@ -469,6 +524,14 @@ export default {
     currentModeDesc() {
       const mode = this.modeOptions.find(m => m.value === this.queryMode)
       return mode?.desc || '上传文档并构建知识库后，您可以提出相关问题'
+    },
+    currentModeLabel() {
+      const mode = this.modeOptions.find(m => m.value === this.queryMode)
+      return mode?.label || '纯 RAG'
+    },
+    currentProviderLabel() {
+      const opt = this.providerOptions.find(o => o.value === this.provider)
+      return opt?.label || '后端默认'
     }
   },
   mounted() {
@@ -579,6 +642,16 @@ export default {
       this.saveSettings()
       const mode = this.modeOptions.find(m => m.value === val)
       this.$message.success(`已切换到${mode?.label || val}模式`)
+    },
+    selectMode(value) {
+      this.queryMode = value
+      this.modeDropdownOpen = false
+      this.onModeChange(value)
+    },
+    selectProvider(value) {
+      this.provider = value
+      this.providerDropdownOpen = false
+      this.saveSettings()
     },
     async fetchStatus() {
       try {
@@ -1345,7 +1418,7 @@ export default {
 }
 </script>
 
-<style scoped>
+<style scoped lang="scss">
 @import './styles.css';
 
 /* 简单的可访问加载转圈指示器 */
@@ -1427,26 +1500,45 @@ export default {
 .dark .message-avatar { opacity: 0.9 }
 
 .dark .input-container {
-  background: linear-gradient(180deg, rgba(3,6,9,0.7), rgba(4,8,12,0.85));
-  border-top: 1px solid rgba(255,255,255,0.02);
+  background: linear-gradient(180deg, rgba(15, 15, 30, 0.9), rgba(10, 10, 25, 0.95));
+  border-top: 1px solid rgba(129, 140, 248, 0.1);
+  backdrop-filter: blur(20px);
 }
 
-.dark .input-box .chat-input textarea {
-  background: rgba(255,255,255,0.02) !important;
+.dark .input-box .chat-input,
+.dark .input-box .el-textarea {
+  background: transparent !important;
+  border: none !important;
+}
+
+.dark .input-box .chat-input .el-textarea__inner {
+  background: rgba(26, 26, 50, 0.8) !important;
   color: #e8f3ff !important;
-  border: 1px solid rgba(255,255,255,0.04) !important;
+  border: 2px solid rgba(129, 140, 248, 0.2) !important;
+  border-radius: 12px !important;
+}
+
+.dark .input-box .chat-input .el-textarea__inner:focus {
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.25) !important;
 }
 
 .dark .send-btn {
-  background: linear-gradient(180deg,#2f7ef8,#1f57d1);
-  color: #fff;
-  box-shadow: 0 8px 30px rgba(31,87,209,0.18);
-  border-radius: 8px;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6) !important;
+  color: #fff !important;
+  box-shadow: 0 4px 20px rgba(99, 102, 241, 0.4) !important;
+  border-radius: 12px !important;
+  border: none !important;
+}
+
+.dark .send-btn:hover {
+  box-shadow: 0 6px 30px rgba(99, 102, 241, 0.5) !important;
+  transform: translateY(-2px);
 }
 
 .dark .el-drawer__body {
-  background: #071018;
-  color: #dfe9f8;
+  background: transparent;
+  color: #e2e8f0;
 }
 
 .dark .upload-box {
@@ -1599,5 +1691,11 @@ export default {
   color: #8a9bb0;
 }
 
+::v-deep .el-input__inner {
+  border-radius: 0px !important;
+}
 
+::v-deep .el-input__wrapper {
+  padding: 0px !important;
+}
 </style>
